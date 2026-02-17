@@ -72,7 +72,7 @@ Safety checks in gateway:
 ## Database
 
 Migration SQL:
-- `/Users/tyler/Desktop/GoldBot/src-tauri/migrations/001_init.sql`
+- `src-tauri/migrations/001_init.sql`
 
 Tables:
 - `locations`
@@ -95,7 +95,6 @@ Tables:
 ## 2) Install JS deps
 
 ```bash
-cd /Users/tyler/Desktop/GoldBot
 npm install
 ```
 
@@ -114,10 +113,7 @@ npm run tauri build
 ## Run tests
 
 ```bash
-npm ci
-npm run build
 cargo test --manifest-path src-tauri/Cargo.toml
-npm run tauri dev
 ```
 
 ## Demo Mode Notes
