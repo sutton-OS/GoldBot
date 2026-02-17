@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { invoke } from '@tauri-apps/api/tauri';
 import {
   createLead,
   getKillSwitch,
@@ -138,9 +139,40 @@ export default function App() {
     }
   }
 
+  async function openDevtools() {
+    try {
+      await invoke('open_devtools');
+      return;
+    } catch {
+      // Fall through to direct window API.
+    }
+
+    try {
+      const tauriWindow = (
+        window as Window & {
+          __TAURI__?: {
+            window?: {
+              getCurrent?: () => { openDevtools?: () => void };
+            };
+          };
+        }
+      ).__TAURI__?.window?.getCurrent?.();
+      tauriWindow?.openDevtools?.();
+    } catch {
+      // Best-effort only.
+    }
+  }
+
   return (
     <main>
-      <h1>Gym Lead Booker (Demo Mode)</h1>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+        <h1>Gym Lead Booker (Demo Mode)</h1>
+        {import.meta.env.DEV && (
+          <button type="button" onClick={() => void openDevtools()}>
+            Debug
+          </button>
+        )}
+      </div>
       <p className="subtle">Local-only PoC. No real SMS or webhooks.</p>
 
       {alert && <div className="alert">{alert}</div>}

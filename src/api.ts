@@ -12,6 +12,12 @@ import type {
   TodayReport
 } from './types';
 
+export type ClientErrorLogInput = {
+  message: string;
+  stack?: string;
+  source: string;
+};
+
 export async function listLeads(): Promise<LeadSummary[]> {
   return invoke('list_leads');
 }
@@ -54,4 +60,12 @@ export async function agentDryRun(req: AgentDryRunRequest): Promise<AgentDryRunR
 
 export async function agentExecute(req: AgentExecuteRequest): Promise<AgentExecuteResult> {
   return invoke('agent_execute', { req });
+}
+
+export async function logClientError(input: ClientErrorLogInput): Promise<void> {
+  return invoke('log_client_error', {
+    message: input.message,
+    stack: input.stack,
+    source: input.source
+  });
 }

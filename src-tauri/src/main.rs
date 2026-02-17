@@ -8,7 +8,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration as StdDuration;
@@ -1526,6 +1527,48 @@ fn agent_execute(
     map_cmd_result(result, "agent_execute", &app)
 }
 
+#[tauri::command]
+fn log_client_error(
+    _state: State<AppState>,
+    app: AppHandle,
+    message: String,
+    stack: Option<String>,
+    source: String,
+) -> Result<(), String> {
+    let app_dir = ensure_app_data_dir(&app)?;
+    let log_path = app_dir.join("client_errors.log");
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .map_err(|err| format!("failed to open {}: {err}", log_path.display()))?;
+
+    writeln!(file, "timestamp: {}", now_iso())
+        .map_err(|err| format!("failed to write client error timestamp: {err}"))?;
+    writeln!(file, "source: {}", source)
+        .map_err(|err| format!("failed to write client error source: {err}"))?;
+    writeln!(file, "message: {}", message)
+        .map_err(|err| format!("failed to write client error message: {err}"))?;
+    if let Some(stack_text) = stack.filter(|s| !s.trim().is_empty()) {
+        writeln!(file, "stack:")
+            .map_err(|err| format!("failed to write client error stack header: {err}"))?;
+        writeln!(file, "{stack_text}")
+            .map_err(|err| format!("failed to write client error stack: {err}"))?;
+    }
+    writeln!(file).map_err(|err| format!("failed to finish client error log line: {err}"))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+fn open_devtools(app: AppHandle) -> Result<(), String> {
+    let window = app
+        .get_window("main")
+        .ok_or_else(|| "main window not found".to_string())?;
+    window.open_devtools();
+    Ok(())
+}
+
 fn execute_initial_follow_up(
     conn: &Connection,
     location: &Location,
@@ -2267,6 +2310,15 @@ fn initialize_db(db_path: &Path) -> AppResult<()> {
     Ok(())
 }
 
+fn ensure_app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let app_dir = app
+        .path_resolver()
+        .app_local_data_dir()
+        .ok_or_else(|| "failed to resolve app local data dir".to_string())?;
+    fs::create_dir_all(&app_dir).map_err(|err| format!("failed to create app data dir: {err}"))?;
+    Ok(app_dir)
+}
+
 fn map_cmd_result<T: Serialize>(
     result: AppResult<T>,
     action_name: &str,
@@ -2358,9 +2410,7 @@ fn default_business_hours_json() -> &'static str {
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
-            let app_dir = app.path_resolver().app_local_data_dir().ok_or_else(|| {
-                AppError::Validation("failed to resolve app local data dir".to_string())
-            })?;
+            let app_dir = ensure_app_data_dir(&app.handle()).map_err(AppError::Validation)?;
             let db_path = app_dir.join("gym_lead_booker_demo.sqlite");
             initialize_db(&db_path)?;
             app.manage(AppState { db_path });
@@ -2376,6 +2426,8 @@ fn main() {
             get_today_report,
             get_kill_switch,
             set_kill_switch,
+            log_client_error,
+            open_devtools,
             run_due_jobs,
             agent_dry_run,
             agent_execute
