@@ -1,0 +1,7 @@
+node_modules/** linguist-vendored=true
+target/** linguist-vendored=true
+src-tauri/target/** linguist-vendored=true
+dist/** linguist-vendored=true
+build/** linguist-vendored=true
+.vite/** linguist-vendored=true
+.cache/** linguist-vendored=true

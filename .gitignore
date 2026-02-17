@@ -1,0 +1,65 @@
+## Node / Vite
+node_modules/
+dist/
+build/
+.vite/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+package-lock.json.tmp
+
+# Vite dev cache
+/.vite
+/.temp
+
+# Tauri / Rust
+/target/
+/src-tauri/target/
+/**/target/
+
+# Build artifacts / packages
+*.app
+*.dmg
+*.exe
+*.msi
+*.deb
+*.rpm
+*.AppImage
+*.zip
+*.tar.gz
+
+# Logs and coverage
+*.log
+logs/
+coverage/
+.nyc_output/
+
+# Environment / secrets
+.env
+.env.*.local
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.*
+credentials.json
+
+# Editor and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# Caches
+.cache/
+node_modules/.cache/
+.pnpm-store/
+dist-cache/
+
+# Misc
+*.tgz
+node_modules
+dist
+src-tauri/target
+.DS_Store
