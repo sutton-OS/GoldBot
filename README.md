@@ -1,8 +1,8 @@
-# Gym Lead Booker (Demo Mode)
+# Gold Bot
 
 Locked-down desktop PoC built with **Tauri v1 + React + TypeScript + Rust + SQLite**.
 
-This project is **local-only demo mode**:
+This project is **local-only**:
 - No Twilio
 - No webhooks
 - No outbound network dependencies at runtime
@@ -116,12 +116,12 @@ npm run tauri build
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-## Demo Mode Notes
+## Local-Only Notes
 
 - All message activity is local SQLite data.
 - No external SMS providers are used.
 - Scheduled jobs are executed by `run_due_jobs` command (UI auto-polls every 15s and also has manual trigger).
-- DB file is created in the app local data directory as `gym_lead_booker_demo.sqlite`.
+- DB file is created in the app local data directory as `db/goldbot.sqlite`.
 
 ## Error Handling
 
@@ -138,7 +138,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 - Lead detail with conversation history
 - Inbound SMS simulator
 
-## Security / Demo Constraints
+## Security / Local Constraints
 
 - No webhook endpoints
 - No external API calls for messaging

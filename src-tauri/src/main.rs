@@ -149,8 +149,33 @@ struct RunJobsResult {
     errors: i64,
 }
 
+#[derive(Debug, Serialize)]
+struct WipeAllDataResult {
+    messages: i64,
+    appointments: i64,
+    scheduled_jobs: i64,
+    audit_log: i64,
+    conversations: i64,
+    leads: i64,
+}
+
 #[derive(Debug)]
 struct Location {
+    gym_name: String,
+    timezone: String,
+    business_hours_json: String,
+}
+
+#[derive(Debug, Serialize)]
+struct LocationSettings {
+    id: i64,
+    gym_name: String,
+    timezone: String,
+    business_hours_json: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct LocationSettingsInput {
     gym_name: String,
     timezone: String,
     business_hours_json: String,
@@ -330,6 +355,14 @@ impl<'a> ActionGateway<'a> {
 
     fn validate_outbound(&self, req: &OutboundRequest) -> AppResult<()> {
         if req.automated && is_kill_switch_enabled(self.conn)? {
+            log_kill_switch_block(
+                self.conn,
+                "create_outbound_message",
+                "conversation",
+                Some(req.conversation_id.to_string()),
+                serde_json::to_value(req)?,
+                "automated outbound blocked because automation is paused (safe mode)",
+            );
             return Err(AppError::Validation(
                 "kill switch is enabled; automated outbound blocked".to_string(),
             ));
@@ -441,8 +474,16 @@ impl<'a> ActionGateway<'a> {
         Ok(())
     }
 
-    fn validate_schedule_job(&self, _req: &ScheduleJobRequest) -> AppResult<()> {
+    fn validate_schedule_job(&self, req: &ScheduleJobRequest) -> AppResult<()> {
         if is_kill_switch_enabled(self.conn)? {
+            log_kill_switch_block(
+                self.conn,
+                "schedule_job",
+                "scheduled_job",
+                None,
+                serde_json::to_value(req)?,
+                "job scheduling blocked because automation is paused (safe mode)",
+            );
             return Err(AppError::Validation(
                 "kill switch is enabled; job scheduling blocked".to_string(),
             ));
@@ -1195,6 +1236,75 @@ fn get_kill_switch(state: State<AppState>, app: AppHandle) -> Result<bool, Strin
 }
 
 #[tauri::command]
+fn get_location_settings(state: State<AppState>, app: AppHandle) -> Result<LocationSettings, String> {
+    let result = retry_db(|| {
+        let conn = open_conn(&state)?;
+        let primary_id = ensure_primary_location(&conn)?;
+        conn.query_row(
+            "SELECT id, gym_name, timezone, business_hours_json FROM locations WHERE id=?",
+            params![primary_id],
+            |row| {
+                Ok(LocationSettings {
+                    id: row.get(0)?,
+                    gym_name: row.get(1)?,
+                    timezone: row.get(2)?,
+                    business_hours_json: row.get(3)?,
+                })
+            },
+        )
+        .map_err(AppError::from)
+    });
+
+    map_cmd_result(result, "get_location_settings", &app)
+}
+
+#[tauri::command]
+fn update_location_settings(
+    state: State<AppState>,
+    app: AppHandle,
+    input: LocationSettingsInput,
+) -> Result<LocationSettings, String> {
+    let result = retry_db(|| {
+        let conn = open_conn(&state)?;
+        let primary_id = ensure_primary_location(&conn)?;
+
+        let gym_name = input.gym_name.trim().to_string();
+        if gym_name.is_empty() {
+            return Err(AppError::Validation(
+                "gym_name must be non-empty".to_string(),
+            ));
+        }
+
+        let timezone = input.timezone.trim().to_string();
+        parse_tz(&timezone)?;
+
+        let business_hours_json = input.business_hours_json.trim().to_string();
+        parse_business_hours(&business_hours_json)?;
+
+        conn.execute(
+            "UPDATE locations SET gym_name=?, timezone=?, business_hours_json=? WHERE id=?",
+            params![gym_name, timezone, business_hours_json, primary_id],
+        )?;
+
+        conn.query_row(
+            "SELECT id, gym_name, timezone, business_hours_json FROM locations WHERE id=?",
+            params![primary_id],
+            |row| {
+                Ok(LocationSettings {
+                    id: row.get(0)?,
+                    gym_name: row.get(1)?,
+                    timezone: row.get(2)?,
+                    business_hours_json: row.get(3)?,
+                })
+            },
+        )
+        .map_err(AppError::from)
+    });
+
+    map_cmd_result(result, "update_location_settings", &app)
+}
+
+#[tauri::command]
 fn set_kill_switch(state: State<AppState>, app: AppHandle, enabled: bool) -> Result<(), String> {
     let result = retry_db(|| {
         let conn = open_conn(&state)?;
@@ -1231,101 +1341,73 @@ fn set_kill_switch(state: State<AppState>, app: AppHandle, enabled: bool) -> Res
 }
 
 #[tauri::command]
+fn export_db_path(state: State<AppState>, app: AppHandle) -> Result<String, String> {
+    let result = (|| -> AppResult<String> {
+        let path = if state.db_path.is_absolute() {
+            state.db_path.clone()
+        } else {
+            std::env::current_dir()
+                .map_err(|err| AppError::Validation(err.to_string()))?
+                .join(&state.db_path)
+        };
+        Ok(path.to_string_lossy().to_string())
+    })();
+
+    map_cmd_result(result, "export_db_path", &app)
+}
+
+#[tauri::command]
+fn wipe_all_data_confirmed(
+    state: State<AppState>,
+    app: AppHandle,
+) -> Result<WipeAllDataResult, String> {
+    let result = retry_db(|| {
+        let mut conn = open_conn(&state)?;
+        let tx = conn.transaction()?;
+
+        let messages = tx.execute("DELETE FROM messages", params![])? as i64;
+        let appointments = tx.execute("DELETE FROM appointments", params![])? as i64;
+        let scheduled_jobs = tx.execute("DELETE FROM scheduled_jobs", params![])? as i64;
+        let audit_log = tx.execute("DELETE FROM audit_log", params![])? as i64;
+        let conversations = tx.execute("DELETE FROM conversations", params![])? as i64;
+        let leads = tx.execute("DELETE FROM leads", params![])? as i64;
+
+        let counts = WipeAllDataResult {
+            messages,
+            appointments,
+            scheduled_jobs,
+            audit_log,
+            conversations,
+            leads,
+        };
+
+        tx.execute(
+            "INSERT INTO audit_log (action_type, target_type, target_id, request_json, response_json, success, error_message, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            params![
+                "wipe_all_data_confirmed",
+                "system",
+                Option::<String>::None,
+                "{}",
+                Some(serde_json::to_string(&counts)?),
+                1,
+                Option::<String>::None,
+                now_iso()
+            ],
+        )?;
+
+        tx.commit()?;
+        Ok(counts)
+    });
+
+    map_cmd_result(result, "wipe_all_data_confirmed", &app)
+}
+
+#[tauri::command]
 fn run_due_jobs(state: State<AppState>, app: AppHandle) -> Result<RunJobsResult, String> {
     let result = retry_db(|| {
         let conn = open_conn(&state)?;
-        let location = get_location(&conn)?;
-
-        if is_kill_switch_enabled(&conn)? {
-            let skipped: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM scheduled_jobs
-                 WHERE status='pending' AND datetime(execute_at) <= datetime('now')",
-                params![],
-                |row| row.get(0),
-            )?;
-            return Ok(RunJobsResult {
-                processed: 0,
-                skipped,
-                errors: 0,
-            });
-        }
-
-        let mut stmt = conn.prepare(
-            "SELECT id, job_type, target_id, payload_json
-             FROM scheduled_jobs
-             WHERE status='pending' AND datetime(execute_at) <= datetime('now')
-             ORDER BY datetime(execute_at) ASC",
-        )?;
-
-        let mut jobs: Vec<(i64, String, Option<i64>, String)> = Vec::new();
-        let mapped = stmt.query_map(params![], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-        })?;
-        for item in mapped {
-            jobs.push(item?);
-        }
-
-        let mut processed = 0;
-        let mut skipped = 0;
-        let mut errors = 0;
-
-        for (job_id, job_type, target_id, payload_json) in jobs {
-            if is_kill_switch_enabled(&conn)? {
-                skipped += 1;
-                continue;
-            }
-
-            let run_result = match job_type.as_str() {
-                "initial_follow_up" => {
-                    let payload: InitialFollowUpPayload = serde_json::from_str(&payload_json)?;
-                    execute_initial_follow_up(&conn, &location, payload.lead_id)
-                }
-                "appointment_reminder" => {
-                    let payload: ReminderPayload = serde_json::from_str(&payload_json)?;
-                    execute_appointment_reminder(&conn, &location, payload)
-                }
-                _ => Err(AppError::Validation(format!(
-                    "unknown job_type: {job_type}"
-                ))),
-            };
-
-            match run_result {
-                Ok(()) => {
-                    processed += 1;
-                    conn.execute(
-                        "UPDATE scheduled_jobs SET status='completed' WHERE id=?",
-                        params![job_id],
-                    )?;
-                }
-                Err(err) => {
-                    errors += 1;
-                    conn.execute(
-                        "UPDATE scheduled_jobs SET status='failed' WHERE id=?",
-                        params![job_id],
-                    )?;
-                    let _ = insert_audit(
-                        &conn,
-                        "run_scheduled_job",
-                        "scheduled_job",
-                        Some(job_id.to_string()),
-                        json!({
-                            "job_type": job_type,
-                            "target_id": target_id,
-                            "payload_json": payload_json
-                        }),
-                        None,
-                        false,
-                        Some(err.to_string()),
-                    );
-                }
-            }
-        }
-
-        Ok(RunJobsResult {
-            processed,
-            skipped,
-            errors,
-        })
+        run_due_jobs_with_conn(&conn)
     });
 
     map_cmd_result(result, "run_due_jobs", &app)
@@ -2160,9 +2242,10 @@ fn next_open_time(location: &Location, from_utc: DateTime<Utc>) -> AppResult<Dat
 }
 
 fn get_location(conn: &Connection) -> AppResult<Location> {
+    let primary_id = ensure_primary_location(conn)?;
     conn.query_row(
-        "SELECT gym_name, timezone, business_hours_json FROM locations ORDER BY id LIMIT 1",
-        params![],
+        "SELECT gym_name, timezone, business_hours_json FROM locations WHERE id=?",
+        params![primary_id],
         |row| {
             Ok(Location {
                 gym_name: row.get(0)?,
@@ -2250,11 +2333,154 @@ fn insert_audit(
     Ok(())
 }
 
+fn log_kill_switch_block(
+    conn: &Connection,
+    action_type: &str,
+    target_type: &str,
+    target_id: Option<String>,
+    request_json: Value,
+    detail: &str,
+) {
+    let message = format!("kill switch block: {detail}");
+    let _ = insert_audit(
+        conn,
+        action_type,
+        target_type,
+        target_id,
+        request_json,
+        Some(json!({
+            "blocked_by": "kill_switch",
+            "detail": detail
+        })),
+        false,
+        Some(message),
+    );
+}
+
 fn open_conn(state: &State<AppState>) -> AppResult<Connection> {
-    let conn = Connection::open(&state.db_path)?;
+    open_conn_path(&state.db_path)
+}
+
+fn open_conn_path(db_path: &Path) -> AppResult<Connection> {
+    let conn = Connection::open(db_path)?;
     conn.busy_timeout(StdDuration::from_millis(500))?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
     Ok(conn)
+}
+
+fn run_due_jobs_with_conn(conn: &Connection) -> AppResult<RunJobsResult> {
+    let location = get_location(conn)?;
+
+    if is_kill_switch_enabled(conn)? {
+        let skipped: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM scheduled_jobs
+             WHERE status='pending' AND datetime(execute_at) <= datetime('now')",
+            params![],
+            |row| row.get(0),
+        )?;
+        if skipped > 0 {
+            log_kill_switch_block(
+                conn,
+                "run_due_jobs",
+                "scheduled_job",
+                None,
+                json!({ "scope": "due_jobs", "skipped": skipped }),
+                "due jobs skipped because automation is paused (safe mode)",
+            );
+        }
+        return Ok(RunJobsResult {
+            processed: 0,
+            skipped,
+            errors: 0,
+        });
+    }
+
+    let mut stmt = conn.prepare(
+        "SELECT id, job_type, target_id, payload_json
+         FROM scheduled_jobs
+         WHERE status='pending' AND datetime(execute_at) <= datetime('now')
+         ORDER BY datetime(execute_at) ASC",
+    )?;
+
+    let mut jobs: Vec<(i64, String, Option<i64>, String)> = Vec::new();
+    let mapped = stmt.query_map(params![], |row| {
+        Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+    })?;
+    for item in mapped {
+        jobs.push(item?);
+    }
+
+    let mut processed = 0;
+    let mut skipped = 0;
+    let mut errors = 0;
+
+    for (job_id, job_type, target_id, payload_json) in jobs {
+        if is_kill_switch_enabled(conn)? {
+            skipped += 1;
+            log_kill_switch_block(
+                conn,
+                "run_scheduled_job",
+                "scheduled_job",
+                Some(job_id.to_string()),
+                json!({
+                    "job_type": job_type,
+                    "target_id": target_id,
+                    "payload_json": payload_json
+                }),
+                "scheduled job skipped because automation is paused (safe mode)",
+            );
+            continue;
+        }
+
+        let run_result = match job_type.as_str() {
+            "initial_follow_up" => {
+                let payload: InitialFollowUpPayload = serde_json::from_str(&payload_json)?;
+                execute_initial_follow_up(conn, &location, payload.lead_id)
+            }
+            "appointment_reminder" => {
+                let payload: ReminderPayload = serde_json::from_str(&payload_json)?;
+                execute_appointment_reminder(conn, &location, payload)
+            }
+            _ => Err(AppError::Validation(format!("unknown job_type: {job_type}"))),
+        };
+
+        match run_result {
+            Ok(()) => {
+                processed += 1;
+                conn.execute(
+                    "UPDATE scheduled_jobs SET status='completed' WHERE id=?",
+                    params![job_id],
+                )?;
+            }
+            Err(err) => {
+                errors += 1;
+                conn.execute(
+                    "UPDATE scheduled_jobs SET status='failed' WHERE id=?",
+                    params![job_id],
+                )?;
+                let _ = insert_audit(
+                    conn,
+                    "run_scheduled_job",
+                    "scheduled_job",
+                    Some(job_id.to_string()),
+                    json!({
+                        "job_type": job_type,
+                        "target_id": target_id,
+                        "payload_json": payload_json
+                    }),
+                    None,
+                    false,
+                    Some(err.to_string()),
+                );
+            }
+        }
+    }
+
+    Ok(RunJobsResult {
+        processed,
+        skipped,
+        errors,
+    })
 }
 
 fn initialize_db(db_path: &Path) -> AppResult<()> {
@@ -2275,8 +2501,8 @@ fn initialize_db(db_path: &Path) -> AppResult<()> {
         conn.execute(
             "INSERT INTO locations (gym_name, timezone, business_hours_json) VALUES (?, ?, ?)",
             params![
-                "Demo Gym Downtown",
-                "America/New_York",
+                default_gym_name(),
+                default_timezone(),
                 default_business_hours_json()
             ],
         )?;
@@ -2284,7 +2510,7 @@ fn initialize_db(db_path: &Path) -> AppResult<()> {
 
     conn.execute(
         "INSERT INTO settings (key, value, updated_at)
-         VALUES ('kill_switch', 'false', ?)
+         VALUES ('kill_switch', 'true', ?)
          ON CONFLICT(key) DO NOTHING",
         params![now_iso()],
     )?;
@@ -2376,6 +2602,14 @@ fn parse_tz(tz_name: &str) -> AppResult<Tz> {
         .map_err(|_| AppError::Validation(format!("invalid timezone: {tz_name}")))
 }
 
+fn default_gym_name() -> &'static str {
+    "Demo Gym Downtown"
+}
+
+fn default_timezone() -> &'static str {
+    "America/New_York"
+}
+
 fn null_if_empty(s: &str) -> Option<String> {
     let trimmed = s.trim();
     if trimmed.is_empty() {
@@ -2389,13 +2623,59 @@ fn default_business_hours_json() -> &'static str {
     r#"{"mon":[["09:00","17:00"]],"tue":[["09:00","17:00"]],"wed":[["09:00","17:00"]],"thu":[["09:00","17:00"]],"fri":[["09:00","17:00"]],"sat":[["10:00","14:00"]],"sun":[]}"#
 }
 
+fn ensure_primary_location(conn: &Connection) -> AppResult<i64> {
+    let existing_id: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM locations ORDER BY id LIMIT 1",
+            params![],
+            |row| row.get(0),
+        )
+        .optional()?;
+
+    if let Some(id) = existing_id {
+        return Ok(id);
+    }
+
+    conn.execute(
+        "INSERT INTO locations (gym_name, timezone, business_hours_json) VALUES (?, ?, ?)",
+        params![
+            default_gym_name(),
+            default_timezone(),
+            default_business_hours_json()
+        ],
+    )?;
+
+    Ok(conn.last_insert_rowid())
+}
+
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
             let app_dir = ensure_app_data_dir(&app.handle()).map_err(AppError::Validation)?;
-            let db_path = app_dir.join("gym_lead_booker_demo.sqlite");
+            let db_path = app_dir.join("db").join("goldbot.sqlite");
             initialize_db(&db_path)?;
             app.manage(AppState { db_path });
+            let app_handle = app.handle();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    let _ = tauri::async_runtime::spawn_blocking(|| {
+                        thread::sleep(StdDuration::from_secs(15));
+                    })
+                    .await;
+                    let db_path = {
+                        let state = app_handle.state::<AppState>();
+                        state.db_path.clone()
+                    };
+
+                    if let Err(err) = retry_db(|| {
+                        let conn = open_conn_path(&db_path)?;
+                        run_due_jobs_with_conn(&conn)
+                    }) {
+                        let message = format!("Alert: {err}");
+                        log_command_failure(&app_handle, "run_due_jobs_background", &message);
+                    }
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -2407,7 +2687,11 @@ fn main() {
             simulate_inbound_sms,
             get_today_report,
             get_kill_switch,
+            get_location_settings,
+            update_location_settings,
             set_kill_switch,
+            export_db_path,
+            wipe_all_data_confirmed,
             log_client_error,
             open_devtools,
             run_due_jobs,

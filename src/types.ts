@@ -76,6 +76,28 @@ export type RunJobsResult = {
   errors: number;
 };
 
+export type WipeAllDataResult = {
+  messages: number;
+  appointments: number;
+  scheduled_jobs: number;
+  audit_log: number;
+  conversations: number;
+  leads: number;
+};
+
+export type LocationSettings = {
+  id: number;
+  gym_name: string;
+  timezone: string;
+  business_hours_json: string;
+};
+
+export type UpdateLocationSettingsInput = {
+  gym_name: string;
+  timezone: string;
+  business_hours_json: string;
+};
+
 export type AgentAction =
   | {
       action_type: 'send_outbound';

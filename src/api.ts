@@ -7,9 +7,12 @@ import type {
   LeadCreateInput,
   LeadCreateResult,
   LeadDetail,
+  LocationSettings,
   LeadSummary,
   RunJobsResult,
-  TodayReport
+  TodayReport,
+  UpdateLocationSettingsInput,
+  WipeAllDataResult
 } from './types';
 
 export type ClientErrorLogInput = {
@@ -44,6 +47,22 @@ export async function getKillSwitch(): Promise<boolean> {
 
 export async function setKillSwitch(enabled: boolean): Promise<void> {
   return invoke('set_kill_switch', { enabled });
+}
+
+export async function exportDbPath(): Promise<string> {
+  return invoke('export_db_path');
+}
+
+export async function wipeAllDataConfirmed(): Promise<WipeAllDataResult> {
+  return invoke('wipe_all_data_confirmed');
+}
+
+export async function getLocationSettings(): Promise<LocationSettings> {
+  return invoke('get_location_settings');
+}
+
+export async function updateLocationSettings(input: UpdateLocationSettingsInput): Promise<LocationSettings> {
+  return invoke('update_location_settings', { input });
 }
 
 export async function runDueJobs(): Promise<RunJobsResult> {

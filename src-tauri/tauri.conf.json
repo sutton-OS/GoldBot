@@ -7,7 +7,7 @@
     "distDir": "../dist"
   },
   "package": {
-    "productName": "Gym Lead Booker (Demo Mode)",
+    "productName": "Gold Bot",
     "version": "0.1.0"
   },
   "tauri": {
@@ -19,15 +19,15 @@
     },
     "windows": [
       {
-        "title": "Gym Lead Booker (Demo Mode)",
+        "title": "Gold Bot",
         "width": 1200,
         "height": 900,
         "resizable": true
       }
     ],
     "bundle": {
-      "active": false,
-      "identifier": "com.demo.gymleadbooker"
+      "active": true,
+      "identifier": "com.suttonos.goldbot"
     }
   }
 }
