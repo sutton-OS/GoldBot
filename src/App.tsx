@@ -301,30 +301,51 @@ export default function App() {
               First Name
               <input
                 value={form.first_name}
-                onChange={(e) => setForm((f) => ({ ...f, first_name: e.currentTarget.value }))}
+                onChange={(e) => {
+                  const value = e.currentTarget.value;
+                  setForm((f) => ({ ...f, first_name: value }));
+                }}
               />
             </label>
             <label>
               Last Name
-              <input value={form.last_name} onChange={(e) => setForm((f) => ({ ...f, last_name: e.currentTarget.value }))} />
+              <input
+                value={form.last_name}
+                onChange={(e) => {
+                  const value = e.currentTarget.value;
+                  setForm((f) => ({ ...f, last_name: value }));
+                }}
+              />
             </label>
             <label>
               Phone (E.164)
               <input
                 placeholder="+15555550123"
                 value={form.phone_e164}
-                onChange={(e) => setForm((f) => ({ ...f, phone_e164: e.currentTarget.value }))}
+                onChange={(e) => {
+                  const value = e.currentTarget.value;
+                  setForm((f) => ({ ...f, phone_e164: value }));
+                }}
               />
             </label>
             <label>
               Source
-              <input value={form.source} onChange={(e) => setForm((f) => ({ ...f, source: e.currentTarget.value }))} />
+              <input
+                value={form.source}
+                onChange={(e) => {
+                  const value = e.currentTarget.value;
+                  setForm((f) => ({ ...f, source: value }));
+                }}
+              />
             </label>
             <label className="switch-row">
               <input
                 type="checkbox"
                 checked={form.consent}
-                onChange={(e) => setForm((f) => ({ ...f, consent: e.currentTarget.checked }))}
+                onChange={(e) => {
+                  const checked = e.currentTarget.checked;
+                  setForm((f) => ({ ...f, consent: checked }));
+                }}
               />
               <span>Consent received</span>
             </label>
@@ -368,36 +389,39 @@ export default function App() {
             Gym Name
             <input
               value={locationSettings.gym_name}
-              onChange={(e) =>
+              onChange={(e) => {
+                const value = e.currentTarget.value;
                 setLocationSettings((current) => ({
                   ...current,
-                  gym_name: e.currentTarget.value
-                }))
-              }
+                  gym_name: value
+                }));
+              }}
             />
           </label>
           <label>
             Timezone
             <input
               value={locationSettings.timezone}
-              onChange={(e) =>
+              onChange={(e) => {
+                const value = e.currentTarget.value;
                 setLocationSettings((current) => ({
                   ...current,
-                  timezone: e.currentTarget.value
-                }))
-              }
+                  timezone: value
+                }));
+              }}
             />
           </label>
           <label style={{ gridColumn: '1 / -1' }}>
             Business Hours JSON
             <textarea
               value={locationSettings.business_hours_json}
-              onChange={(e) =>
+              onChange={(e) => {
+                const value = e.currentTarget.value;
                 setLocationSettings((current) => ({
                   ...current,
-                  business_hours_json: e.currentTarget.value
-                }))
-              }
+                  business_hours_json: value
+                }));
+              }}
             />
           </label>
         </div>
