@@ -1,0 +1,322 @@
+import { useEffect, useMemo, useState } from 'react';
+import {
+  createLead,
+  getKillSwitch,
+  getLeadDetail,
+  getTodayReport,
+  listLeads,
+  runDueJobs,
+  setKillSwitch,
+  simulateInboundSms
+} from './api';
+import type { LeadCreateInput, LeadDetail, LeadSummary, TodayReport } from './types';
+
+const emptyForm: LeadCreateInput = {
+  first_name: '',
+  last_name: '',
+  phone_e164: '',
+  consent: true,
+  consent_at: null,
+  source: 'front-desk'
+};
+
+function formatTs(ts: string | null) {
+  if (!ts) return '-';
+  const date = new Date(ts);
+  return Number.isNaN(date.getTime()) ? ts : date.toLocaleString();
+}
+
+export default function App() {
+  const [form, setForm] = useState<LeadCreateInput>(emptyForm);
+  const [leads, setLeads] = useState<LeadSummary[]>([]);
+  const [selectedLeadId, setSelectedLeadId] = useState<number | null>(null);
+  const [leadDetail, setLeadDetail] = useState<LeadDetail | null>(null);
+  const [inboundText, setInboundText] = useState('');
+  const [report, setReport] = useState<TodayReport | null>(null);
+  const [killSwitch, setKillSwitchState] = useState(false);
+  const [alert, setAlert] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const selectedLead = useMemo(() => leads.find((l) => l.id === selectedLeadId) ?? null, [leads, selectedLeadId]);
+
+  async function refreshBasics() {
+    const [leadsData, reportData, killSwitchData] = await Promise.all([
+      listLeads(),
+      getTodayReport(),
+      getKillSwitch()
+    ]);
+    setLeads(leadsData);
+    setReport(reportData);
+    setKillSwitchState(killSwitchData);
+    if (!selectedLeadId && leadsData.length > 0) {
+      setSelectedLeadId(leadsData[0].id);
+    }
+  }
+
+  async function refreshLeadDetail(leadId: number | null = selectedLeadId) {
+    if (!leadId) {
+      setLeadDetail(null);
+      return;
+    }
+    const detail = await getLeadDetail(leadId);
+    setLeadDetail(detail);
+  }
+
+  async function refreshAll() {
+    await refreshBasics();
+    await refreshLeadDetail();
+  }
+
+  useEffect(() => {
+    refreshAll().catch((err) => setAlert(String(err)));
+  }, []);
+
+  useEffect(() => {
+    refreshLeadDetail().catch((err) => setAlert(String(err)));
+  }, [selectedLeadId]);
+
+  useEffect(() => {
+    const id = window.setInterval(async () => {
+      try {
+        await runDueJobs();
+        await refreshAll();
+      } catch (err) {
+        setAlert(String(err));
+      }
+    }, 15000);
+
+    return () => window.clearInterval(id);
+  }, [selectedLeadId]);
+
+  async function submitLead() {
+    setBusy(true);
+    try {
+      const payload: LeadCreateInput = {
+        ...form,
+        consent_at: form.consent ? new Date().toISOString() : null
+      };
+      const result = await createLead(payload);
+      if (result.note) {
+        setAlert(result.note);
+      } else {
+        setAlert(null);
+      }
+      setSelectedLeadId(result.lead_id);
+      setForm(emptyForm);
+      await refreshAll();
+    } catch (err) {
+      setAlert(String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitInbound() {
+    if (!selectedLeadId || !inboundText.trim()) return;
+    setBusy(true);
+    try {
+      await simulateInboundSms(selectedLeadId, inboundText.trim());
+      setInboundText('');
+      await refreshAll();
+    } catch (err) {
+      setAlert(String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleKillSwitch(value: boolean) {
+    setBusy(true);
+    try {
+      await setKillSwitch(value);
+      setKillSwitchState(value);
+      await refreshAll();
+    } catch (err) {
+      setAlert(String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <main>
+      <h1>Gym Lead Booker (Demo Mode)</h1>
+      <p className="subtle">Local-only PoC. No real SMS or webhooks.</p>
+
+      {alert && <div className="alert">{alert}</div>}
+
+      <section className="grid two">
+        <article className="panel">
+          <h2>Today</h2>
+          <div className="stats">
+            <div>
+              <span>Leads Created</span>
+              <strong>{report?.leads_created ?? 0}</strong>
+            </div>
+            <div>
+              <span>Contacted</span>
+              <strong>{report?.contacted ?? 0}</strong>
+            </div>
+            <div>
+              <span>Booked</span>
+              <strong>{report?.booked ?? 0}</strong>
+            </div>
+            <div>
+              <span>Opt-outs</span>
+              <strong>{report?.opt_outs ?? 0}</strong>
+            </div>
+            <div>
+              <span>Needs Attention</span>
+              <strong>{report?.needs_attention ?? 0}</strong>
+            </div>
+          </div>
+        </article>
+
+        <article className="panel">
+          <h2>Kill Switch</h2>
+          <label className="switch-row">
+            <input
+              type="checkbox"
+              checked={killSwitch}
+              disabled={busy}
+              onChange={(e) => toggleKillSwitch(e.currentTarget.checked)}
+            />
+            <span>Disable all automated message creation</span>
+          </label>
+          <button disabled={busy} onClick={() => runDueJobs().then(refreshAll).catch((err) => setAlert(String(err)))}>
+            Run Due Jobs Now
+          </button>
+        </article>
+      </section>
+
+      <section className="grid two">
+        <article className="panel">
+          <h2>Lead Intake</h2>
+          <div className="form-grid">
+            <label>
+              First Name
+              <input
+                value={form.first_name}
+                onChange={(e) => setForm((f) => ({ ...f, first_name: e.currentTarget.value }))}
+              />
+            </label>
+            <label>
+              Last Name
+              <input value={form.last_name} onChange={(e) => setForm((f) => ({ ...f, last_name: e.currentTarget.value }))} />
+            </label>
+            <label>
+              Phone (E.164)
+              <input
+                placeholder="+15555550123"
+                value={form.phone_e164}
+                onChange={(e) => setForm((f) => ({ ...f, phone_e164: e.currentTarget.value }))}
+              />
+            </label>
+            <label>
+              Source
+              <input value={form.source} onChange={(e) => setForm((f) => ({ ...f, source: e.currentTarget.value }))} />
+            </label>
+            <label className="switch-row">
+              <input
+                type="checkbox"
+                checked={form.consent}
+                onChange={(e) => setForm((f) => ({ ...f, consent: e.currentTarget.checked }))}
+              />
+              <span>Consent received</span>
+            </label>
+          </div>
+          <button disabled={busy || !form.phone_e164.trim()} onClick={submitLead}>
+            Create Lead
+          </button>
+        </article>
+
+        <article className="panel">
+          <h2>Leads</h2>
+          <div className="list">
+            {leads.map((lead) => (
+              <button
+                key={lead.id}
+                className={`lead-row ${selectedLeadId === lead.id ? 'active' : ''}`}
+                onClick={() => setSelectedLeadId(lead.id)}
+              >
+                <div>
+                  <strong>
+                    {lead.first_name || 'Unknown'} {lead.last_name || ''}
+                  </strong>
+                  <small>{lead.phone_e164}</small>
+                </div>
+                <div className="flags">
+                  <small>{lead.status}</small>
+                  {lead.opted_out && <small className="chip danger">opted out</small>}
+                  {lead.needs_staff_attention && <small className="chip warn">needs staff</small>}
+                </div>
+              </button>
+            ))}
+            {leads.length === 0 && <p>No leads yet.</p>}
+          </div>
+        </article>
+      </section>
+
+      <section className="panel">
+        <h2>Lead Detail</h2>
+        {!selectedLead || !leadDetail ? (
+          <p>Select a lead to view conversation details.</p>
+        ) : (
+          <div className="detail-grid">
+            <div>
+              <p>
+                <strong>Name:</strong> {leadDetail.lead.first_name || '-'} {leadDetail.lead.last_name || ''}
+              </p>
+              <p>
+                <strong>Phone:</strong> {leadDetail.lead.phone_e164}
+              </p>
+              <p>
+                <strong>State:</strong> {leadDetail.conversation.state}
+              </p>
+              <p>
+                <strong>Repairs:</strong> {leadDetail.conversation.repair_attempts}
+              </p>
+              <p>
+                <strong>Last Contact:</strong> {formatTs(leadDetail.lead.last_contact_at)}
+              </p>
+              <p>
+                <strong>Next Action:</strong> {formatTs(leadDetail.lead.next_action_at)}
+              </p>
+              <h3>Simulate inbound SMS</h3>
+              <textarea
+                value={inboundText}
+                onChange={(e) => setInboundText(e.currentTarget.value)}
+                placeholder="Type inbound message"
+              />
+              <button disabled={busy || !inboundText.trim()} onClick={submitInbound}>
+                Submit Inbound SMS
+              </button>
+            </div>
+
+            <div>
+              <h3>Messages</h3>
+              <div className="message-list">
+                {leadDetail.messages.map((msg) => (
+                  <div key={msg.id} className={`message ${msg.direction === 'OUTBOUND' ? 'outbound' : 'inbound'}`}>
+                    <small>
+                      {msg.direction} · {formatTs(msg.created_at)} · {msg.status}
+                    </small>
+                    <p>{msg.body}</p>
+                  </div>
+                ))}
+              </div>
+
+              <h3>Appointments</h3>
+              {leadDetail.appointments.length === 0 && <p>No appointments.</p>}
+              {leadDetail.appointments.map((apt) => (
+                <p key={apt.id}>
+                  {formatTs(apt.start_at)} to {formatTs(apt.end_at)} ({apt.status})
+                </p>
+              ))}
+            </div>
+          </div>
+        )}
+      </section>
+    </main>
+  );
+}
