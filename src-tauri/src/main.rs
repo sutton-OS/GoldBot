@@ -151,7 +151,6 @@ struct RunJobsResult {
 
 #[derive(Debug)]
 struct Location {
-    id: i64,
     gym_name: String,
     timezone: String,
     business_hours_json: String,
@@ -160,19 +159,14 @@ struct Location {
 #[derive(Debug)]
 struct LeadRow {
     id: i64,
-    phone_e164: String,
     first_name: Option<String>,
-    last_name: Option<String>,
     consent: bool,
     opted_out: bool,
-    status: String,
-    needs_staff_attention: bool,
 }
 
 #[derive(Debug)]
 struct ConversationRow {
     id: i64,
-    lead_id: i64,
     state: String,
     state_json: String,
     last_inbound_at: Option<String>,
@@ -1257,21 +1251,15 @@ fn run_due_jobs(state: State<AppState>, app: AppHandle) -> Result<RunJobsResult,
         }
 
         let mut stmt = conn.prepare(
-            "SELECT id, job_type, target_id, execute_at, payload_json
+            "SELECT id, job_type, target_id, payload_json
              FROM scheduled_jobs
              WHERE status='pending' AND datetime(execute_at) <= datetime('now')
              ORDER BY datetime(execute_at) ASC",
         )?;
 
-        let mut jobs: Vec<(i64, String, Option<i64>, String, String)> = Vec::new();
+        let mut jobs: Vec<(i64, String, Option<i64>, String)> = Vec::new();
         let mapped = stmt.query_map(params![], |row| {
-            Ok((
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-            ))
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
         })?;
         for item in mapped {
             jobs.push(item?);
@@ -1281,7 +1269,7 @@ fn run_due_jobs(state: State<AppState>, app: AppHandle) -> Result<RunJobsResult,
         let mut skipped = 0;
         let mut errors = 0;
 
-        for (job_id, job_type, target_id, _execute_at, payload_json) in jobs {
+        for (job_id, job_type, target_id, payload_json) in jobs {
             if is_kill_switch_enabled(&conn)? {
                 skipped += 1;
                 continue;
@@ -2173,14 +2161,13 @@ fn next_open_time(location: &Location, from_utc: DateTime<Utc>) -> AppResult<Dat
 
 fn get_location(conn: &Connection) -> AppResult<Location> {
     conn.query_row(
-        "SELECT id, gym_name, timezone, business_hours_json FROM locations ORDER BY id LIMIT 1",
+        "SELECT gym_name, timezone, business_hours_json FROM locations ORDER BY id LIMIT 1",
         params![],
         |row| {
             Ok(Location {
-                id: row.get(0)?,
-                gym_name: row.get(1)?,
-                timezone: row.get(2)?,
-                business_hours_json: row.get(3)?,
+                gym_name: row.get(0)?,
+                timezone: row.get(1)?,
+                business_hours_json: row.get(2)?,
             })
         },
     )
@@ -2189,19 +2176,15 @@ fn get_location(conn: &Connection) -> AppResult<Location> {
 
 fn get_lead(conn: &Connection, lead_id: i64) -> AppResult<LeadRow> {
     conn.query_row(
-        "SELECT id, phone_e164, first_name, last_name, consent, opted_out, status, needs_staff_attention
+        "SELECT id, first_name, consent, opted_out
          FROM leads WHERE id=?",
         params![lead_id],
         |row| {
             Ok(LeadRow {
                 id: row.get(0)?,
-                phone_e164: row.get(1)?,
-                first_name: row.get(2)?,
-                last_name: row.get(3)?,
-                consent: i64_to_bool(row.get(4)?),
-                opted_out: i64_to_bool(row.get(5)?),
-                status: row.get(6)?,
-                needs_staff_attention: i64_to_bool(row.get(7)?),
+                first_name: row.get(1)?,
+                consent: i64_to_bool(row.get(2)?),
+                opted_out: i64_to_bool(row.get(3)?),
             })
         },
     )
@@ -2211,18 +2194,17 @@ fn get_lead(conn: &Connection, lead_id: i64) -> AppResult<LeadRow> {
 
 fn get_conversation_by_lead_id(conn: &Connection, lead_id: i64) -> AppResult<ConversationRow> {
     conn.query_row(
-        "SELECT id, lead_id, state, state_json, last_inbound_at, last_outbound_at, repair_attempts
+        "SELECT id, state, state_json, last_inbound_at, last_outbound_at, repair_attempts
          FROM conversations WHERE lead_id=?",
         params![lead_id],
         |row| {
             Ok(ConversationRow {
                 id: row.get(0)?,
-                lead_id: row.get(1)?,
-                state: row.get(2)?,
-                state_json: row.get(3)?,
-                last_inbound_at: row.get(4)?,
-                last_outbound_at: row.get(5)?,
-                repair_attempts: row.get(6)?,
+                state: row.get(1)?,
+                state_json: row.get(2)?,
+                last_inbound_at: row.get(3)?,
+                last_outbound_at: row.get(4)?,
+                repair_attempts: row.get(5)?,
             })
         },
     )
