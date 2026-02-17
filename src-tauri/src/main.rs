@@ -2387,7 +2387,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::init_in_memory_db;
+    use super::test_helpers::init_in_memory_db;
 
     fn ts(input: &str) -> DateTime<Utc> {
         parse_ts(input).expect("timestamp should parse")
